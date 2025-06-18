@@ -1,0 +1,124 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-06-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+# Load necessary libraries
+library(tidyverse)    # For data manipulation (dplyr, readr) and piping
+library(ranger)       # For random forest modeling
+
+# 1. Data Loading
+setwd("C:/Users/33307/Desktop/5925/")
+train <- read.csv("train.csv", stringsAsFactors = TRUE)
+test <- read.csv("test.csv", stringsAsFactors = TRUE)
+sample_submission <- read.csv("sample_submission.csv")
+
+# 2. Data Preprocessing
+# Convert categorical codes to factor and set up target as factor (presence/absence)
+train <- train %>%
+  mutate(
+    disturb  = factor(disturb),               # Disturbance level as factor
+    soilfert = factor(soilfert),              # Soil fertility class as factor
+    pres.abs = factor(pres.abs, levels = c(0, 1))  # Target to factor (0 = absent, 1 = present)
+  )
+
+# Apply the same factor levels to the test set for consistency
+test <- test %>%
+  mutate(
+    disturb  = factor(disturb, levels = levels(train$disturb)),
+    soilfert = factor(soilfert, levels = levels(train$soilfert))
+    # Note: pres.abs is not in test data (that's what we are predicting)
+  )
+
+# Remove non-predictive or duplicate columns:
+# - Drop 'plot' (ID of the plot) because it's just an identifier.
+# - Drop 'long' and 'lat' (latitude/longitude) since we have easting/northing for location.
+train <- train %>% select(-plot, -long, -lat, -id)  # drop 'id' from train as well (unique row ID not needed for modeling)
+test  <- test  %>% select(-plot, -long, -lat)       # keep 'id' in test for output, drop other unnecessary columns
+
+```
+
+```{r}
+# 3. Model Training and Prediction for each species
+species_list <- unique(train$Species)    # All species names in the training data
+results_list <- list()                  # To collect prediction results for each species
+
+for (sp in species_list) {
+  # Subset training data for the current species
+  train_sp <- train %>% filter(Species == sp)
+  # Subset test data for the current species
+  test_sp  <- test %>% filter(Species == sp)
+  
+  # Drop the 'Species' column from features (it's not a predictor in its own model)
+  train_sp <- train_sp %>% select(-Species)
+  # Separate the test IDs (for output) and prepare test features
+  test_ids <- test_sp$id
+  test_sp_features <- test_sp %>% select(-Species, -id)
+  
+  # Calculate class weights to address class imbalance
+  # (Weight for class "1" = number of negatives / number of positives, class "0" weight = 1)
+  n_pos <- sum(train_sp$pres.abs == 1)
+  n_neg <- sum(train_sp$pres.abs == 0)
+  if (n_pos > 0 && n_neg > 0) {
+    class_wts <- c("0" = 1, "1" = n_neg / n_pos)
+  } else {
+    class_wts <- NULL  # In case a species has only one class in training (not expected here)
+  }
+  
+  # Train a Random Forest model (using ranger) for this species
+  rf_model <- ranger(
+    pres.abs ~ ., 
+    data            = train_sp, 
+    probability     = TRUE,    # Fit model to output class probabilities
+    classification  = TRUE,    # Classification mode
+    num.trees       = 500,     # Number of trees in the forest (500 for stability)
+    class.weights   = class_wts,   # Apply class imbalance weights (if any)
+    seed            = 42          # Set seed for reproducibility
+  )
+  
+  # Predict probabilities on the test set for this species
+  rf_pred <- predict(rf_model, data = test_sp_features)
+  # Extract the probability of class "1" (species is present)
+  # The prediction for each test sample is a matrix with probabilities for classes "0" and "1"
+  pred_probs <- rf_pred$predictions[, "1"]
+  
+  # Store the results: a data frame of IDs and predicted probabilities for this species
+  results_list[[sp]] <- data.frame(id = test_ids, pred = pred_probs)
+}
+
+```
+
+```{r}
+# 4. Combine all species predictions and save to CSV
+submission <- bind_rows(results_list)           # Combine results for all species
+submission <- submission %>% arrange(id)        # Sort by id (optional, for consistent order)
+write_csv(submission, "submission.csv")         # Write the submission file (id, pred columns)
+# The output CSV ("submission.csv") will have columns "id" and "pred", as required.
+
+```
+
