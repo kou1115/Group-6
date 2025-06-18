@@ -1,0 +1,184 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-06-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(caret)
+library(randomForest)
+```{r}
+
+```
+
+```{r}
+setwd("C:/Users/33307/Desktop/5925/")
+train <- read.csv("train.csv", stringsAsFactors = TRUE)
+test <- read.csv("test.csv", stringsAsFactors = TRUE)
+sample_submission <- read.csv("sample_submission.csv")
+```
+
+```{r}
+# 查看数据结构
+cat("训练集维度:", dim(train), "\n")
+## 训练集维度: 9336 14
+cat("测试集维度:", dim(test), "\n")
+## 测试集维度: 7264 13
+cat("提交样例维度:", dim(sample_submission), "\n")
+## 提交样例维度: 7264 2
+# 查看训练集的前几行
+head(train)
+```
+```{r}
+table(train$Species)
+```
+
+```{r}
+table(train$pres.abs)
+```
+```{r}
+# 按物种查看存在/不存在分布
+species_presence <- table(train$Species, train$pres.abs)
+species_presence
+```
+```{r}
+# 计算每个物种的存在比例
+species_presence_rate <- species_presence[,2] / (species_presence[,1] + species_presence[,2])
+species_presence_rate
+```
+```{r}
+# 检查是否有缺失值
+cat("训练集中的缺失值数量:\n")
+## 训练集中的缺失值数量:
+colSums(is.na(train))
+```
+```{r}
+cat("\n 测试集中的缺失值数量:\n")
+## 
+## 测试集中的缺失值数量:
+colSums(is.na(test))
+```
+```{r}
+# 查看 plot 的唯一值数量
+cat("训练集中 plot 的唯一值数量:", length(unique(train$plot)), "\n")
+## 训练集中 plot 的唯一值数量: 1167
+cat("测试集中 plot 的唯一值数量:", length(unique(test$plot)), "\n")
+## 测试集中 plot 的唯一值数量: 908
+```
+
+```{r}
+# 数据预处理
+# 将物种转换为因子
+train$Species <- as.factor(train$Species)
+test$Species <- as.factor(test$Species)
+# 将 pres.abs 转换为因子并重命名级别
+train$pres.abs <- factor(train$pres.abs, levels = c(0, 1), labels = c("absent", "present"))
+# 创建函数训练单个物种的模型
+train_species_model <- function(species_name) {
+ cat("训练", species_name, "的模型\n")
+ 
+ # 筛选该物种的训练数据
+ species_train <- train %>% filter(Species == species_name)
+ 
+ # 设置预测变量
+ predictors <- c("long", "lat", "disturb", "rainann", "soildepth", 
+ "soilfert", "tempann", "topo", "easting", "northing")
+ 
+ # 设置训练控制参数，使用交叉验证
+ ctrl <- trainControl(
+ method = "cv",
+ number = 5,
+ classProbs = TRUE,
+ summaryFunction = twoClassSummary,
+ savePredictions = "final"
+ )
+ 
+ # 处理类别不平衡问题
+ # 计算正类别的权重
+ pos_weight <- sum(species_train$pres.abs == "absent") / sum(species_train$pres.abs == "prese
+nt")
+ 
+ # 设置随机森林参数
+ rf_grid <- expand.grid(
+ mtry = c(3, 4, 5)
+ )
+ 
+ # 训练随机森林模型
+ set.seed(123) # 设置随机种子以确保结果可重复
+ rf_model <- train(
+ x = species_train[, predictors],
+ y = species_train$pres.abs,
+ method = "rf",
+ metric = "ROC",
+ trControl = ctrl,
+ tuneGrid = rf_grid,
+ importance = TRUE,
+ weights = ifelse(species_train$pres.abs == "present", pos_weight, 1)
+ )
+ 
+ return(rf_model)
+}
+# 为每个物种训练模型
+species_list <- levels(train$Species)
+models_list <- list()
+for (species in species_list) {
+ models_list[[species]] <- train_species_model(species)
+}
+```
+```{r}
+# 在测试集上进行预测
+make_predictions <- function(species_name, model) {
+ # 筛选该物种的测试数据
+ species_test <- test %>% filter(Species == species_name)
+ 
+ # 预测概率
+ pred_probs <- predict(model, species_test, type = "prob")
+ 
+ # 获取正类的概率
+ pos_probs <- pred_probs[, "present"]
+ 
+ # 创建预测数据框
+ predictions <- data.frame(
+ id = species_test$id,
+ pred = pos_probs
+ )
+ 
+ return(predictions)
+}
+# 为每个物种生成预测结果
+all_predictions <- data.frame()
+for (species in species_list) {
+ species_preds <- make_predictions(species, models_list[[species]])
+ all_predictions <- rbind(all_predictions, species_preds)
+}
+# 确保预测结果按照 id 排序
+all_predictions <- all_predictions %>% arrange(id)
+# 保存预测结果
+write.csv(all_predictions, "submission.csv", row.names = FALSE)
+```
+
