@@ -1,0 +1,125 @@
+---
+title: "species"
+author: "Shuchen Kou"
+date: "2025-06-08"
+output: html_document
+---
+
+```{r}
+library(randomForest)
+library(caret)
+```
+```{r}
+data_train<-read.csv("train.csv",header=TRUE)
+data_test<-read.csv("test.csv",header=TRUE)
+train_1<-subset(data_train, Species=="Angophora.costata")
+train_2<-subset(data_train, Species=="Corymbia.gummifera")
+train_3<-subset(data_train, Species=="Corymbia.intermedia")
+train_4<-subset(data_train, Species=="Eucalyptus.blakelyi")
+train_5<-subset(data_train, Species=="Eucalyptus.carnea")
+train_6<-subset(data_train, Species=="Eucalyptus.fastigata")
+train_7<-subset(data_train, Species=="Eucalyptus.campanulata")
+train_8<-subset(data_train, Species=="Eucalyptus.nova-anglica")
+
+```
+
+```{r}
+test_1<-subset(data_test, Species=="Angophora.costata")
+test_2<-subset(data_test, Species=="Corymbia.gummifera")
+test_3<-subset(data_test, Species=="Corymbia.intermedia")
+test_4<-subset(data_test, Species=="Eucalyptus.blakelyi")
+test_5<-subset(data_test, Species=="Eucalyptus.carnea")
+test_6<-subset(data_test, Species=="Eucalyptus.fastigata")
+test_7<-subset(data_test, Species=="Eucalyptus.campanulata")
+test_8<-subset(data_test, Species=="Eucalyptus.nova-anglica")
+
+```
+
+#species1
+```{r}
+Logistic_1<-glm(as.factor(pres.abs)~long+lat+rainann+soilfert+tempann+easting+northing,data = train_1,family=binomial)
+summary(Logistic_1)
+Logi_prediction_1<-predict(Logistic_1,newdata=test_1,type="response")
+test_1f<-cbind(test_1,Logi_prediction_1)
+test_1f<-test_1f[, c("id", "Logi_prediction_1")]
+```
+
+#species2
+```{r}
+Logistic_2<-glm(as.factor(pres.abs)~long+lat+rainann+soildepth+tempann+topo+easting+northing,data = train_2,family=binomial)
+summary(Logistic_2)
+Logi_prediction_2<-predict(Logistic_2,newdata=test_2,type="response")
+test_2f<-cbind(test_2,Logi_prediction_2)
+test_2f<-test_2f[, c("id", "Logi_prediction_2")]
+```
+
+#species3
+```{r}
+Logistic_3<-glm(as.factor(pres.abs)~disturb+soildepth+tempann,data = train_3,family=binomial)
+summary(Logistic_3)
+Logi_prediction_3<-predict(Logistic_3,newdata=test_3,type="response")
+test_3f<-cbind(test_3,Logi_prediction_3)
+test_3f<-test_3f[, c("id", "Logi_prediction_3")]
+```
+
+
+#species4
+```{r}
+Logistic_4<-glm(as.factor(pres.abs)~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_4,family=binomial)
+summary(Logistic_4)
+Logi_prediction_4<-predict(Logistic_4,newdata=test_4,type="response")
+test_4f<-cbind(test_4,Logi_prediction_4)
+test_4f<-test_4f[, c("id", "Logi_prediction_4")]
+```
+
+
+#species5
+```{r}
+Logistic_5<-glm(as.factor(pres.abs)~long+lat+disturb+rainann+soildepth+soilfert+tempann+easting+northing,data = train_5,family=binomial)
+summary(Logistic_5)
+Logi_prediction_5<-predict(Logistic_5,newdata=test_5,type="response")
+test_5f<-cbind(test_5,Logi_prediction_5)
+test_5f<-test_5f[, c("id", "Logi_prediction_5")]
+```
+
+
+#species6
+```{r}
+Logistic_6<-glm(as.factor(pres.abs)~long+lat+rainann+soilfert+tempann+easting+northing,data = train_6,family=binomial)
+summary(Logistic_6)
+Logi_prediction_6<-predict(Logistic_6,newdata=test_6,type="response")
+test_6f<-cbind(test_6,Logi_prediction_6)
+test_6f<-test_6f[, c("id", "Logi_prediction_6")]
+```
+
+
+#species7
+```{r}
+Logistic_7<-glm(as.factor(pres.abs)~long+lat+disturb+soildepth+tempann+easting+northing,data = train_7,family=binomial)
+summary(Logistic_7)
+Logi_prediction_7<-predict(Logistic_7,newdata=test_7,type="response")
+test_7f<-cbind(test_7,Logi_prediction_7)
+test_7f<-test_7f[, c("id", "Logi_prediction_7")]
+```
+
+
+#species8
+```{r}
+Logistic_8<-glm(as.factor(pres.abs)~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_8,family=binomial)
+summary(Logistic_8)
+Logi_prediction_8<-predict(Logistic_8,newdata=test_8,type="response")
+test_8f<-cbind(test_8,Logi_prediction_8)
+test_8f<-test_8f[, c("id", "Logi_prediction_8")]
+```
+
+```{r}
+write.csv(test_1f, "1.csv", row.names = FALSE)
+write.csv(test_2f, "2.csv", row.names = FALSE)
+write.csv(test_3f, "3.csv", row.names = FALSE)
+write.csv(test_4f, "4.csv", row.names = FALSE)
+write.csv(test_5f, "5.csv", row.names = FALSE)
+write.csv(test_6f, "6.csv", row.names = FALSE)
+write.csv(test_7f, "7.csv", row.names = FALSE)
+write.csv(test_8f, "8.csv", row.names = FALSE)
+```
+
