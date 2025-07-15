@@ -6,8 +6,11 @@ output: html_document
 ---
 
 ```{r}
-library(randomForest)
-library(caret)
+install.packages("glmnet")
+install.packages("car")
+library(car)
+install.packages("mgcv")
+library(mgcv)
 ```
 ```{r}
 data_train<-read.csv("train.csv",header=TRUE)
@@ -37,29 +40,194 @@ test_8<-subset(data_test, Species=="Eucalyptus.nova-anglica")
 
 #species1
 ```{r}
-Logistic_1<-glm(as.factor(pres.abs)~long+lat+rainann+soilfert+tempann+easting+northing,data = train_1,family=binomial)
+library(car)
+
+Logistic_1<-glm(as.factor(pres.abs)~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_1,family=binomial)
 summary(Logistic_1)
 Logi_prediction_1<-predict(Logistic_1,newdata=test_1,type="response")
-test_1f<-cbind(test_1,Logi_prediction_1)
-test_1f<-test_1f[, c("id", "Logi_prediction_1")]
+#lat	和 northing 高度相关
+#long	和 easting 高度相关
+#删掉lat 和long
+vif(Logistic_1)
 ```
+
+```{r}
+# lasso（可行）
+library(glmnet)
+x<-model.matrix(pres.abs~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=train_1)[, -1]
+y<-as.factor(train_1$pres.abs)
+set.seed(123)
+cv_fit<-cv.glmnet(x,y,family="binomial",alpha=1)
+best_lambda<-cv_fit$lambda.min
+
+# 用最优 lambda 拟合最终模型
+lasso_model<-glmnet(x,y,family="binomial",alpha=1,lambda=best_lambda)
+coef(lasso_model)
+
+# 测试集也要转为设计矩阵
+x_test<-model.matrix(~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=test_1)[, -1]
+predicted_prob<-predict(lasso_model,newx=x_test,type = "response")
+result_1<-data.frame(id=test_1$id,predicted_prob=as.vector(predicted_prob))
+```
+Ridge 更适合处理这种“有共线性”的模型
+
+样本是否类别严重不平衡？
+→ ❌ LASSO 很容易崩溃（之前你已经试过多次）
+→ ✔️ Ridge 对这种情况更稳定，不容易出错
+
+```{r}
+#ridge（可行）（apply）
+library(glmnet)
+x<-model.matrix(pres.abs~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=train_1)[, -1]
+y<-train_1$pres.abs
+cv_fit<-cv.glmnet(x,y,family="binomial",alpha=0)
+best_lambda<-cv_fit$lambda.min
+
+# 用最优 lambda 拟合最终模型
+ridge_model<-glmnet(x,y,family="binomial",alpha=0,lambda=best_lambda)
+coef(ridge_model)
+
+# 测试集也要转为设计矩阵
+x_test<-model.matrix(~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=test_1)[, -1]
+predicted_prob<-predict(ridge_model,newx=x_test,type = "response")
+
+result_1<-data.frame(id=test_1$id,predicted_prob=as.vector(predicted_prob))
+
+```
+```{r}
+#gam
+library(mgcv)
+#long+lat 共线性
+#disturb+soildepth+topo 不显著
+Logi_gam_1<-gam(pres.abs~s(rainann)+factor(soilfert)+s(tempann)+s(easting)+northing,family=binomial,data=train_1)
+pred_gam<-predict(Logi_gam_1,newdata=test_1,type="response")
+summary(Logi_gam_1)
+#可视化
+#plot(Logi_gam_1, pages = 1, shade = TRUE)
+result_gam_1<-data.frame(id=test_1$id,predicted_prob=as.vector(pred_gam))
+
+```
+
 
 #species2
 ```{r}
-Logistic_2<-glm(as.factor(pres.abs)~long+lat+rainann+soildepth+tempann+topo+easting+northing,data = train_2,family=binomial)
+#glm（apply）
+Logistic_2<-glm(as.factor(pres.abs)~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_2,family=binomial)
 summary(Logistic_2)
 Logi_prediction_2<-predict(Logistic_2,newdata=test_2,type="response")
-test_2f<-cbind(test_2,Logi_prediction_2)
-test_2f<-test_2f[, c("id", "Logi_prediction_2")]
+vif(Logistic_2)
+#lat	和 northing 高度相关
+#long	和 easting 高度相关
+#删掉lat 和long
+result_2<-data.frame(id=test_2$id,predicted_prob=as.vector(predicted_prob))
 ```
+
+
+```{r}
+table(train_2$pres.abs)
+```
+你现在使用 glmnet() 进行 二分类建模（binomial），但是你的数据里，其中一个类别的样本太少（少于 8 个），这会导致：
+交叉验证（cv.glmnet）结果不稳定；
+模型容易过拟合或完全不收敛；
+正则化失效或分类概率极端（0 或 1）。
+
+就说明你在 train_2 中，类别 1 的数据太少（比如只有 8 个），这个会直接触发 glmnet 的警告
+***换成gam() 做建模
+
+```{r}
+# lasso和ridge都不可行
+library(glmnet)
+x<-model.matrix(pres.abs~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=train_2)[, -1]
+y<-train_2$pres.abs
+cv_fit<-cv.glmnet(x,y,family="binomial",alpha=0)
+best_lambda<-cv_fit$lambda.min
+
+# 用最优 lambda 拟合最终模型
+ridge_model<-glmnet(x,y,family="binomial",alpha=0,lambda=best_lambda)
+coef(ridge_model)
+
+# 测试集也要转为设计矩阵
+x_test<-model.matrix(~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=test_2)[, -1]
+predicted_prob<-predict(ridge_model,newx=x_test,type = "response")
+
+result_2<-data.frame(id=test_2$id,predicted_prob=as.vector(predicted_prob))
+
+```
+
+```{r}
+library(mgcv)
+#disturb+soilfert+easting 不显著
+Logi_gam_2<-gam(pres.abs~rainann+s(soildepth)+s(tempann)+s(topo)+s(northing),family=binomial,data=train_2)
+pred_gam<-predict(Logi_gam_2,newdata=test_2,type="response")
+summary(Logi_gam_2)
+
+result_gam_2<-data.frame(id=test_2$id,predicted_prob=as.vector(pred_gam))
+```
+
 
 #species3
 ```{r}
-Logistic_3<-glm(as.factor(pres.abs)~disturb+soildepth+tempann,data = train_3,family=binomial)
+#glm（apply）
+Logistic_3<-glm(as.factor(pres.abs)~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_3,family=binomial)
 summary(Logistic_3)
 Logi_prediction_3<-predict(Logistic_3,newdata=test_3,type="response")
-test_3f<-cbind(test_3,Logi_prediction_3)
-test_3f<-test_3f[, c("id", "Logi_prediction_3")]
+result_3<-data.frame(id=test_3$id,predicted_prob=as.vector(predicted_prob))
+vif(Logistic_3)
+#lat	和 northing 高度相关
+#long	和 easting 高度相关
+#删掉lat 和long
+```
+主要原因：极端样本不平衡 + 少量正类（pres.abs = 1 只有 8 个）
+这个数据太“稀疏”，glmnet() 即使尝试用很大的惩罚也收敛不了，最后模型根本没学到任何有用的东西（结果为空模型）。
+***放弃 LASSO，直接用逻辑回归 glm()
+
+```{r}
+# lasso（不可行）
+library(glmnet)
+x<-model.matrix(pres.abs~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=train_3)[, -1]
+y<-as.factor(train_3$pres.abs)
+set.seed(123)
+cv_fit<-cv.glmnet(x,y,family="binomial",alpha=1)
+best_lambda<-cv_fit$lambda.min
+
+# 用最优 lambda 拟合最终模型
+lasso_model<-glmnet(x,y,family="binomial",alpha=1,lambda=best_lambda)
+coef(lasso_model)
+
+# 测试集也要转为设计矩阵
+x_test<-model.matrix(~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=test_3)[, -1]
+predicted_prob<-predict(lasso_model,newx=x_test,type = "response")
+result_3<-data.frame(id=test_3$id,predicted_prob=as.vector(predicted_prob))
+```
+
+```{r}
+#ridge（不可行）
+library(glmnet)
+x<-model.matrix(pres.abs~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=train_3)[, -1]
+y<-train_3$pres.abs
+cv_fit<-cv.glmnet(x,y,family="binomial",alpha=0)
+best_lambda<-cv_fit$lambda.min
+
+# 用最优 lambda 拟合最终模型
+ridge_model<-glmnet(x,y,family="binomial",alpha=0,lambda=best_lambda)
+coef(ridge_model)
+
+# 测试集也要转为设计矩阵
+x_test<-model.matrix(~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=test_3)[, -1]
+predicted_prob<-predict(ridge_model,newx=x_test,type = "response")
+
+result_3<-data.frame(id=test_3$id,predicted_prob=as.vector(predicted_prob))
+```
+
+
+```{r}
+library(mgcv)
+#rainann+soilfert+topo+easting+northing 不显著
+Logi_gam_3<-gam(pres.abs~factor(disturb)+soildepth+s(tempann),family=binomial,data=train_3)
+pred_gam<-predict(Logi_gam_3,newdata=test_3,type="response")
+summary(Logi_gam_3)
+
+result_gam_3<-data.frame(id=test_3$id,predicted_prob=as.vector(pred_gam))
 ```
 
 
@@ -68,38 +236,254 @@ test_3f<-test_3f[, c("id", "Logi_prediction_3")]
 Logistic_4<-glm(as.factor(pres.abs)~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_4,family=binomial)
 summary(Logistic_4)
 Logi_prediction_4<-predict(Logistic_4,newdata=test_4,type="response")
-test_4f<-cbind(test_4,Logi_prediction_4)
-test_4f<-test_4f[, c("id", "Logi_prediction_4")]
+vif(Logistic_4)
+#lat	和 northing 高度相关
+#long	和 easting 高度相关
+#删掉lat 和long
+```
+
+```{r}
+# lasso（可行）
+library(glmnet)
+x<-model.matrix(pres.abs~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=train_4)[, -1]
+y<-as.factor(train_4$pres.abs)
+set.seed(123)
+cv_fit<-cv.glmnet(x,y,family="binomial",alpha=1)
+best_lambda<-cv_fit$lambda.min
+
+# 用最优 lambda 拟合最终模型
+lasso_model<-glmnet(x,y,family="binomial",alpha=1,lambda=best_lambda)
+coef(lasso_model)
+
+# 测试集也要转为设计矩阵
+x_test<-model.matrix(~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=test_4)[, -1]
+predicted_prob<-predict(lasso_model,newx=x_test,type = "response")
+result_4<-data.frame(id=test_4$id,predicted_prob=as.vector(predicted_prob))
+```
+
+```{r}
+#ridge（可行）（apply）
+library(glmnet)
+x<-model.matrix(pres.abs~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=train_4)[, -1]
+y<-train_4$pres.abs
+cv_fit<-cv.glmnet(x,y,family="binomial",alpha=0)
+best_lambda<-cv_fit$lambda.min
+
+# 用最优 lambda 拟合最终模型
+ridge_model<-glmnet(x,y,family="binomial",alpha=0,lambda=best_lambda)
+coef(ridge_model)
+
+# 测试集也要转为设计矩阵
+x_test<-model.matrix(~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=test_4)[, -1]
+predicted_prob<-predict(ridge_model,newx=x_test,type = "response")
+
+result_4<-data.frame(id=test_4$id,predicted_prob=as.vector(predicted_prob))
+```
+
+```{r}
+library(mgcv)
+
+Logi_gam_4<-gam(pres.abs~factor(disturb)+rainann+s(soildepth)+factor(soilfert)+s(tempann)+topo+s(easting)+s(northing),family=binomial,data=train_4)
+pred_gam<-predict(Logi_gam_4,newdata=test_4,type="response")
+summary(Logi_gam_4)
+
+result_gam_4<-data.frame(id=test_4$id,predicted_prob=as.vector(pred_gam))
 ```
 
 
 #species5
 ```{r}
-Logistic_5<-glm(as.factor(pres.abs)~long+lat+disturb+rainann+soildepth+soilfert+tempann+easting+northing,data = train_5,family=binomial)
+#glm（apply）
+Logistic_5<-glm(as.factor(pres.abs)~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_5,family=binomial)
 summary(Logistic_5)
 Logi_prediction_5<-predict(Logistic_5,newdata=test_5,type="response")
-test_5f<-cbind(test_5,Logi_prediction_5)
-test_5f<-test_5f[, c("id", "Logi_prediction_5")]
+result_5<-data.frame(id=test_5$id,predicted_prob=as.vector(predicted_prob))
+vif(Logistic_5)
+#lat	和 northing 高度相关
+#long	和 easting 高度相关
+#删掉lat 和long
+```
+常见原因：
+变量太多或共线性严重
+比如 long 和 easting，lat 和 northing 可能高度相关；
+这些冗余变量会导致模型过拟合。
+
+样本类别不平衡（pres.abs = 1 非常少）
+比如你前面说的 1159 个 0，对比 8 个 1，这种不平衡会让模型趋向输出极端概率（接近0或1）；
+模型容易“只学到如何预测 0”，忽略了稀少的正类。
+
+某些变量完美区分了类别（分离现象）
+比如某个变量在 pres.abs=1 时总是大于 100，在 pres.abs=0 时总是小于 100，模型会直接给出极端概率。
+
+```{r}
+# lasso（不可行）
+library(glmnet)
+x<-model.matrix(pres.abs~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=train_5)[, -1]
+y<-as.factor(train_5$pres.abs)
+set.seed(123)
+cv_fit<-cv.glmnet(x,y,family="binomial",alpha=1)
+best_lambda<-cv_fit$lambda.min
+
+# 用最优 lambda 拟合最终模型
+lasso_model<-glmnet(x,y,family="binomial",alpha=1,lambda=best_lambda)
+coef(lasso_model)
+
+# 测试集也要转为设计矩阵
+x_test<-model.matrix(~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=test_5)[, -1]
+predicted_prob<-predict(lasso_model,newx=x_test,type = "response")
+result_5<-data.frame(id=test_3$id,predicted_prob=as.vector(predicted_prob))
+```
+
+
+```{r}
+#ridge（不可行）
+library(glmnet)
+x<-model.matrix(pres.abs~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=train_5)[, -1]
+y<-train_5$pres.abs
+cv_fit<-cv.glmnet(x,y,family="binomial",alpha=0)
+best_lambda<-cv_fit$lambda.min
+
+# 用最优 lambda 拟合最终模型
+ridge_model<-glmnet(x,y,family="binomial",alpha=0,lambda=best_lambda)
+coef(ridge_model)
+
+# 测试集也要转为设计矩阵
+x_test<-model.matrix(~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=test_5)[, -1]
+predicted_prob<-predict(ridge_model,newx=x_test,type = "response")
+
+result_5<-data.frame(id=test_5$id,predicted_prob=as.vector(predicted_prob))
+```
+
+
+```{r}
+library(mgcv)
+#topo不显著
+Logi_gam_5<-gam(pres.abs~factor(disturb)+rainann+soildepth+factor(soilfert)+s(tempann)+easting+s(northing),family=binomial,data=train_5)
+pred_gam<-predict(Logi_gam_5,newdata=test_5,type="response")
+summary(Logi_gam_5)
+
+result_gam_5<-data.frame(id=test_5$id,predicted_prob=as.vector(pred_gam))
 ```
 
 
 #species6
 ```{r}
-Logistic_6<-glm(as.factor(pres.abs)~long+lat+rainann+soilfert+tempann+easting+northing,data = train_6,family=binomial)
+Logistic_6<-glm(as.factor(pres.abs)~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_6,family=binomial)
 summary(Logistic_6)
 Logi_prediction_6<-predict(Logistic_6,newdata=test_6,type="response")
-test_6f<-cbind(test_6,Logi_prediction_6)
-test_6f<-test_6f[, c("id", "Logi_prediction_6")]
+vif(Logistic_6)
+#lat	和 northing 高度相关
+#long	和 easting 高度相关
+#删掉lat 和long
+
+```
+
+```{r}
+# lasso（可行）
+library(glmnet)
+x<-model.matrix(pres.abs~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=train_6)[, -1]
+y<-as.factor(train_6$pres.abs)
+set.seed(123)
+cv_fit<-cv.glmnet(x,y,family="binomial",alpha=1)
+best_lambda<-cv_fit$lambda.min
+
+# 用最优 lambda 拟合最终模型
+lasso_model<-glmnet(x,y,family="binomial",alpha=1,lambda=best_lambda)
+coef(lasso_model)
+
+# 测试集也要转为设计矩阵
+x_test<-model.matrix(~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=test_6)[, -1]
+predicted_prob<-predict(lasso_model,newx=x_test,type = "response")
+result_6<-data.frame(id=test_6$id,predicted_prob=as.vector(predicted_prob))
+```
+
+```{r}
+#ridge（可行）（apply）
+library(glmnet)
+x<-model.matrix(pres.abs~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=train_6)[, -1]
+y<-train_6$pres.abs
+cv_fit<-cv.glmnet(x,y,family="binomial",alpha=0)
+best_lambda<-cv_fit$lambda.min
+
+# 用最优 lambda 拟合最终模型
+ridge_model<-glmnet(x,y,family="binomial",alpha=0,lambda=best_lambda)
+coef(ridge_model)
+
+# 测试集也要转为设计矩阵
+x_test<-model.matrix(~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=test_6)[, -1]
+predicted_prob<-predict(ridge_model,newx=x_test,type = "response")
+
+result_6<-data.frame(id=test_6$id,predicted_prob=as.vector(predicted_prob))
+```
+
+```{r}
+library(mgcv)
+#disturb+soildepth+topo不显著
+Logi_gam_6<-gam(pres.abs~s(rainann)+factor(soilfert)+s(tempann)+s(easting)+s(northing),family=binomial,data=train_6)
+pred_gam<-predict(Logi_gam_6,newdata=test_6,type="response")
+summary(Logi_gam_6)
+
+result_gam_6<-data.frame(id=test_6$id,predicted_prob=as.vector(pred_gam))
 ```
 
 
 #species7
 ```{r}
-Logistic_7<-glm(as.factor(pres.abs)~long+lat+disturb+soildepth+tempann+easting+northing,data = train_7,family=binomial)
+Logistic_7<-glm(as.factor(pres.abs)~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_7,family=binomial)
 summary(Logistic_7)
 Logi_prediction_7<-predict(Logistic_7,newdata=test_7,type="response")
-test_7f<-cbind(test_7,Logi_prediction_7)
-test_7f<-test_7f[, c("id", "Logi_prediction_7")]
+vif(Logistic_7)
+#lat	和 northing 高度相关
+#long	和 easting 高度相关
+#删掉lat 和long
+```
+
+```{r}
+# lasso（可行）
+library(glmnet)
+x<-model.matrix(pres.abs~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=train_7)[, -1]
+y<-as.factor(train_7$pres.abs)
+set.seed(123)
+cv_fit<-cv.glmnet(x,y,family="binomial",alpha=1)
+best_lambda<-cv_fit$lambda.min
+
+# 用最优 lambda 拟合最终模型
+lasso_model<-glmnet(x,y,family="binomial",alpha=1,lambda=best_lambda)
+coef(lasso_model)
+
+# 测试集也要转为设计矩阵
+x_test<-model.matrix(~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=test_7)[, -1]
+predicted_prob<-predict(lasso_model,newx=x_test,type = "response")
+result_7<-data.frame(id=test_7$id,predicted_prob=as.vector(predicted_prob))
+```
+
+
+```{r}
+#ridge（可行）（apply）
+library(glmnet)
+x<-model.matrix(pres.abs~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=train_7)[, -1]
+y<-train_7$pres.abs
+cv_fit<-cv.glmnet(x,y,family="binomial",alpha=0)
+best_lambda<-cv_fit$lambda.min
+
+# 用最优 lambda 拟合最终模型
+ridge_model<-glmnet(x,y,family="binomial",alpha=0,lambda=best_lambda)
+coef(ridge_model)
+
+# 测试集也要转为设计矩阵
+x_test<-model.matrix(~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=test_7)[, -1]
+predicted_prob<-predict(ridge_model,newx=x_test,type = "response")
+
+result_7<-data.frame(id=test_7$id,predicted_prob=as.vector(predicted_prob))
+```
+```{r}
+library(mgcv)
+#rainann+soilfert+topo不显著
+Logi_gam_7<-gam(pres.abs~factor(disturb)+soildepth+s(tempann)+s(easting)+s(northing),family=binomial,data=train_7)
+pred_gam<-predict(Logi_gam_7,newdata=test_7,type="response")
+summary(Logi_gam_7)
+
+result_gam_7<-data.frame(id=test_7$id,predicted_prob=as.vector(pred_gam))
 ```
 
 
@@ -108,18 +492,68 @@ test_7f<-test_7f[, c("id", "Logi_prediction_7")]
 Logistic_8<-glm(as.factor(pres.abs)~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_8,family=binomial)
 summary(Logistic_8)
 Logi_prediction_8<-predict(Logistic_8,newdata=test_8,type="response")
-test_8f<-cbind(test_8,Logi_prediction_8)
-test_8f<-test_8f[, c("id", "Logi_prediction_8")]
+vif(Logistic_8)
+#lat	和 northing 高度相关
+#long	和 easting 高度相关
+#删掉lat 和long
 ```
 
 ```{r}
-write.csv(test_1f, "1.csv", row.names = FALSE)
-write.csv(test_2f, "2.csv", row.names = FALSE)
-write.csv(test_3f, "3.csv", row.names = FALSE)
-write.csv(test_4f, "4.csv", row.names = FALSE)
-write.csv(test_5f, "5.csv", row.names = FALSE)
-write.csv(test_6f, "6.csv", row.names = FALSE)
-write.csv(test_7f, "7.csv", row.names = FALSE)
-write.csv(test_8f, "8.csv", row.names = FALSE)
+# lasso（可行）
+library(glmnet)
+x<-model.matrix(pres.abs~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=train_8)[, -1]
+y<-as.factor(train_8$pres.abs)
+set.seed(123)
+cv_fit<-cv.glmnet(x,y,family="binomial",alpha=1)
+best_lambda<-cv_fit$lambda.min
+
+# 用最优 lambda 拟合最终模型
+lasso_model<-glmnet(x,y,family="binomial",alpha=1,lambda=best_lambda)
+coef(lasso_model)
+
+# 测试集也要转为设计矩阵
+x_test<-model.matrix(~long+lat+disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=test_8)[, -1]
+predicted_prob<-predict(lasso_model,newx=x_test,type = "response")
+result_8<-data.frame(id=test_8$id,predicted_prob=as.vector(predicted_prob))
+```
+
+
+```{r}
+#ridge（可行）（apply）
+library(glmnet)
+x<-model.matrix(pres.abs~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=train_8)[, -1]
+y<-train_8$pres.abs
+cv_fit<-cv.glmnet(x,y,family="binomial",alpha=0)
+best_lambda<-cv_fit$lambda.min
+
+# 用最优 lambda 拟合最终模型
+ridge_model<-glmnet(x,y,family="binomial",alpha=0,lambda=best_lambda)
+coef(ridge_model)
+
+# 测试集也要转为设计矩阵
+x_test<-model.matrix(~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data=test_8)[, -1]
+predicted_prob<-predict(ridge_model,newx=x_test,type = "response")
+
+result_8<-data.frame(id=test_8$id,predicted_prob=as.vector(predicted_prob))
+```
+```{r}
+library(mgcv)
+
+Logi_gam_8<-gam(pres.abs~factor(disturb)+s(rainann)+soildepth+factor(soilfert)+s(tempann)+topo+s(easting)+s(northing),family=binomial,data=train_8)
+pred_gam<-predict(Logi_gam_8,newdata=test_8,type="response")
+summary(Logi_gam_8)
+
+result_gam_8<-data.frame(id=test_8$id,predicted_prob=as.vector(pred_gam))
+```
+
+
+```{r}
+all_results <- do.call(rbind, list(result_1, result_2, result_3, result_4, result_5, result_6, result_7, result_8))
+write.csv(all_results, "all_results.csv", row.names = FALSE)
+```
+
+```{r}
+gam_results <- do.call(rbind, list(result_gam_1, result_gam_2, result_gam_3, result_gam_4, result_gam_5, result_gam_6, result_gam_7, result_gam_8))
+write.csv(all_results, "gam_results.csv", row.names = FALSE)
 ```
 
