@@ -1,0 +1,756 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-07-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+# 树种预测任务 - 使用随机森林模型
+# 目标：预测8种树种在不同地块中的出现概率
+
+# 加载必要的库
+library(randomForest)
+library(dplyr)
+library(readr)
+library(ggplot2)        # 可视化
+library(corrplot)       # 相关性分析可视化
+library(VIM)            # 缺失值可视化
+library(caret)          # 交叉验证和模型评估
+library(pROC)           # ROC曲线分析
+library(gridExtra)      # 多图布局
+library(RColorBrewer)   # 颜色调色板
+library(viridis)        # 颜色调色板
+library(sf)             # 地理空间数据处理
+library(maps)           # 地图数据
+library(mapdata)        # 扩展地图数据
+library(car)            # 方差分析
+library(lmtest)         # 线性模型检验
+library(broom)          # 整理模型输出
+library(reshape2)       # 数据重构
+library(knitr)          # 报告生成
+library(pheatmap)       # 热图
+library(tidyr)          # 数据整理
+library(tibble)         # 数据框处理
+
+# 设置图形输出参数
+options(warn = -1)  # 暂时关闭警告
+par(family = "sans")  # 设置字体
+
+# 设置随机种子以确保结果的可重复性
+set.seed(42)
+
+# 读取数据
+train_data <- read_csv("train.csv")
+test_data <- read_csv("test.csv")
+
+# 查看数据结构
+cat("训练数据维度:", dim(train_data), "\n")
+cat("测试数据维度:", dim(test_data), "\n")
+
+# 查看树种类型
+unique_species <- unique(train_data$Species)
+cat("树种类型:", length(unique_species), "\n")
+print(unique_species)
+
+# 数据预处理
+# 选择特征列（排除id、plot、Species、pres.abs）
+feature_cols <- c("long", "lat", "disturb", "rainann", "soildepth", 
+                  "soilfert", "tempann", "topo", "easting", "northing")
+
+# 检查缺失值
+cat("训练数据中的缺失值:\n")
+print(sapply(train_data[feature_cols], function(x) sum(is.na(x))))
+
+cat("测试数据中的缺失值:\n")
+print(sapply(test_data[feature_cols], function(x) sum(is.na(x))))
+
+# 处理缺失值（如果有）
+if(any(sapply(train_data[feature_cols], function(x) sum(is.na(x))) > 0)) {
+  cat("检测到缺失值，进行处理...\n")
+  # 用中位数填充数值型变量的缺失值
+  for(col in feature_cols) {
+    if(sum(is.na(train_data[[col]])) > 0) {
+      train_data[[col]][is.na(train_data[[col]])] <- median(train_data[[col]], na.rm = TRUE)
+    }
+    if(sum(is.na(test_data[[col]])) > 0) {
+      test_data[[col]][is.na(test_data[[col]])] <- median(test_data[[col]], na.rm = TRUE)
+    }
+  }
+}
+
+# 数据完整性检查
+cat("数据完整性检查:\n")
+cat("训练数据行数:", nrow(train_data), "\n")
+cat("测试数据行数:", nrow(test_data), "\n")
+cat("特征数量:", length(feature_cols), "\n")
+cat("树种数量:", length(unique_species), "\n")
+
+# 初始化预测结果
+predictions <- data.frame(id = test_data$id, pred = NA)
+
+# 对每个树种训练随机森林模型
+for(species in unique_species) {
+  cat("\n正在处理树种:", species, "\n")
+  
+  # 准备该树种的训练数据
+  species_train <- train_data[train_data$Species == species, ]
+  
+  # 准备特征和目标变量
+  X_train <- species_train[, feature_cols]
+  y_train <- as.factor(species_train$pres.abs)
+  
+  # 训练随机森林模型
+  rf_model <- randomForest(x = X_train, y = y_train, 
+                          ntree = 500,
+                          mtry = sqrt(length(feature_cols)),
+                          importance = TRUE)
+  
+  # 查看模型性能
+  cat("模型OOB错误率:", rf_model$err.rate[rf_model$ntree, "OOB"], "\n")
+  
+  # 准备该树种的测试数据
+  species_test <- test_data[test_data$Species == species, ]
+  X_test <- species_test[, feature_cols]
+  
+  # 进行预测（获取概率）
+  species_pred <- predict(rf_model, X_test, type = "prob")
+  
+  # 提取出现概率（类别1的概率）
+  species_prob <- species_pred[, "1"]
+  
+  # 将预测结果存储到对应的id中
+  predictions[predictions$id %in% species_test$id, "pred"] <- species_prob
+  
+  # 显示该树种的预测概率分布
+  cat("预测概率分布:\n")
+  print(summary(species_prob))
+}
+
+# 检查是否有未预测的记录
+cat("\n未预测的记录数:", sum(is.na(predictions$pred)), "\n")
+
+# 如果有未预测的记录，用平均值填充
+if(sum(is.na(predictions$pred)) > 0) {
+  predictions$pred[is.na(predictions$pred)] <- mean(predictions$pred, na.rm = TRUE)
+}
+
+# 确保预测值在[0,1]范围内
+predictions$pred <- pmax(0, pmin(1, predictions$pred))
+
+# 显示预测结果统计
+cat("\n最终预测结果统计:\n")
+print(summary(predictions$pred))
+
+# 生成提交文件
+write_csv(predictions, "submission.csv")
+cat("\n提交文件已生成: submission.csv\n")
+
+# ======================================================================
+# 扩展分析部分
+# ======================================================================
+
+# 1. 变量重要性分析
+cat("\n=== 变量重要性分析 ===\n")
+
+# 存储所有树种的重要性分析结果
+all_importance <- list()
+all_models <- list()
+
+# 为每个树种训练模型并计算重要性
+for(species in unique_species) {
+  cat("计算", species, "的变量重要性...\n")
+  
+  species_train <- train_data[train_data$Species == species, ]
+  X_train <- species_train[, feature_cols]
+  y_train <- as.factor(species_train$pres.abs)
+  
+  # 训练随机森林模型
+  rf_model <- randomForest(x = X_train, y = y_train, 
+                          ntree = 500, importance = TRUE)
+  
+  # 保存模型
+  all_models[[species]] <- rf_model
+  
+  # 获取重要性分数
+  importance_scores <- importance(rf_model)
+  all_importance[[species]] <- importance_scores
+}
+
+# 创建重要性汇总表
+importance_summary <- data.frame()
+for(species in unique_species) {
+  temp_df <- data.frame(
+    Species = species,
+    Feature = rownames(all_importance[[species]]),
+    MeanDecreaseAccuracy = all_importance[[species]][, "MeanDecreaseAccuracy"],
+    MeanDecreaseGini = all_importance[[species]][, "MeanDecreaseGini"]
+  )
+  importance_summary <- rbind(importance_summary, temp_df)
+}
+
+# 计算特征的平均重要性
+avg_importance <- importance_summary %>%
+  group_by(Feature) %>%
+  summarise(
+    Avg_MeanDecreaseAccuracy = mean(MeanDecreaseAccuracy),
+    Avg_MeanDecreaseGini = mean(MeanDecreaseGini),
+    SD_MeanDecreaseAccuracy = sd(MeanDecreaseAccuracy),
+    SD_MeanDecreaseGini = sd(MeanDecreaseGini)
+  ) %>%
+  arrange(desc(Avg_MeanDecreaseAccuracy))
+
+cat("\n平均变量重要性排序:\n")
+print(avg_importance)
+
+# 可视化重要性分析
+# 创建重要性热图
+importance_matrix <- importance_summary %>%
+  select(Species, Feature, MeanDecreaseAccuracy) %>%
+  pivot_wider(names_from = Feature, values_from = MeanDecreaseAccuracy) %>%
+  column_to_rownames("Species") %>%
+  as.matrix()
+
+# 绘制重要性热图
+png("variable_importance_heatmap.png", width = 12, height = 8, units = "in", res = 300)
+pheatmap(importance_matrix, 
+         main = "变量重要性热图 (Mean Decrease Accuracy)",
+         scale = "column",
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         color = viridis(100),
+         fontsize = 10)
+dev.off()
+
+# 绘制重要性箱线图
+p1 <- ggplot(importance_summary, aes(x = reorder(Feature, MeanDecreaseAccuracy), 
+                                    y = MeanDecreaseAccuracy)) +
+  geom_boxplot(aes(fill = Feature), alpha = 0.7) +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "变量重要性分布 (Mean Decrease Accuracy)",
+       x = "特征变量", y = "重要性分数") +
+  theme(legend.position = "none")
+
+ggsave("variable_importance_boxplot.png", p1, width = 10, height = 6, dpi = 300)
+
+cat("\n重要性分析图表已保存!\n")
+
+# 2. 特征显著性检验
+cat("\n=== 特征显著性检验 ===\n")
+
+# 进行多种统计检验
+significance_results <- data.frame()
+
+for(species in unique_species) {
+  cat("检验", species, "的特征显著性...\n")
+  
+  species_data <- train_data[train_data$Species == species, ]
+  presence_data <- species_data[species_data$pres.abs == 1, feature_cols]
+  absence_data <- species_data[species_data$pres.abs == 0, feature_cols]
+  
+  for(feature in feature_cols) {
+    # t检验
+    t_test_result <- t.test(presence_data[[feature]], absence_data[[feature]])
+    
+    # Wilcoxon检验 (非参数检验)
+    wilcox_result <- wilcox.test(presence_data[[feature]], absence_data[[feature]])
+    
+    # 计算效应大小 (Cohen's d)
+    pooled_sd <- sqrt(((length(presence_data[[feature]]) - 1) * var(presence_data[[feature]]) + 
+                       (length(absence_data[[feature]]) - 1) * var(absence_data[[feature]])) / 
+                      (length(presence_data[[feature]]) + length(absence_data[[feature]]) - 2))
+    cohens_d <- (mean(presence_data[[feature]]) - mean(absence_data[[feature]])) / pooled_sd
+    
+    # 存储结果
+    temp_result <- data.frame(
+      Species = species,
+      Feature = feature,
+      t_test_pvalue = t_test_result$p.value,
+      t_statistic = t_test_result$statistic,
+      wilcox_pvalue = wilcox_result$p.value,
+      wilcox_statistic = wilcox_result$statistic,
+      cohens_d = cohens_d,
+      mean_presence = mean(presence_data[[feature]]),
+      mean_absence = mean(absence_data[[feature]]),
+      effect_size = ifelse(abs(cohens_d) < 0.2, "小", 
+                          ifelse(abs(cohens_d) < 0.5, "中等", "大"))
+    )
+    
+    significance_results <- rbind(significance_results, temp_result)
+  }
+}
+
+# 应用多重比较校正 (Bonferroni校正)
+significance_results$t_test_pvalue_adj <- p.adjust(significance_results$t_test_pvalue, method = "bonferroni")
+significance_results$wilcox_pvalue_adj <- p.adjust(significance_results$wilcox_pvalue, method = "bonferroni")
+
+# 添加显著性标记
+significance_results$t_test_significant <- significance_results$t_test_pvalue_adj < 0.05
+significance_results$wilcox_significant <- significance_results$wilcox_pvalue_adj < 0.05
+
+cat("\n显著性检验结果汇总:\n")
+print(significance_results %>% 
+  filter(t_test_significant == TRUE) %>% 
+  arrange(t_test_pvalue_adj) %>%
+  select(Species, Feature, t_test_pvalue_adj, cohens_d, effect_size))
+
+# 可视化显著性检验结果
+# 创建显著性热图
+sig_matrix <- significance_results %>%
+  select(Species, Feature, t_test_pvalue_adj) %>%
+  mutate(log_p = -log10(t_test_pvalue_adj)) %>%
+  select(-t_test_pvalue_adj) %>%
+  pivot_wider(names_from = Feature, values_from = log_p) %>%
+  column_to_rownames("Species") %>%
+  as.matrix()
+
+png("significance_heatmap.png", width = 12, height = 8, units = "in", res = 300)
+pheatmap(sig_matrix, 
+         main = "特征显著性检验热图 (-log10(p-value))",
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         color = colorRampPalette(c("white", "yellow", "red"))(100),
+         fontsize = 10)
+dev.off()
+
+# 绘制效应大小图
+p2 <- ggplot(significance_results, aes(x = reorder(Feature, abs(cohens_d)), 
+                                      y = cohens_d, fill = Species)) +
+  geom_col(position = "dodge", alpha = 0.7) +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "特征效应大小 (Cohen's d)",
+       x = "特征变量", y = "效应大小") +
+  geom_hline(yintercept = c(-0.2, 0.2), linetype = "dashed", alpha = 0.5) +
+  geom_hline(yintercept = c(-0.5, 0.5), linetype = "dashed", alpha = 0.5) +
+  scale_fill_viridis_d()
+
+ggsave("effect_size_plot.png", p2, width = 12, height = 8, dpi = 300)
+
+cat("\n显著性检验图表已保存!\n")
+
+# 3. 交叉验证
+cat("\n=== 交叉验证 ===\n")
+
+# 设置交叉验证参数
+cv_folds <- 5
+cv_repeats <- 3
+
+# 存储交叉验证结果
+cv_results <- data.frame()
+cv_detailed_results <- list()
+
+for(species in unique_species) {
+  cat("进行", species, "的交叉验证...\n")
+  
+  species_data <- train_data[train_data$Species == species, ]
+  X <- species_data[, feature_cols]
+  y <- as.factor(species_data$pres.abs)
+  
+  # 设置交叉验证控制参数
+  ctrl <- trainControl(
+    method = "repeatedcv",
+    number = cv_folds,
+    repeats = cv_repeats,
+    classProbs = TRUE,
+    summaryFunction = twoClassSummary,
+    savePredictions = "final"
+  )
+  
+  # 调整因子水平名称（caret需要有效的R变量名）
+  levels(y) <- c("Absent", "Present")
+  
+  # 训练模型
+  cv_model <- train(
+    x = X,
+    y = y,
+    method = "rf",
+    trControl = ctrl,
+    metric = "ROC",
+    tuneGrid = expand.grid(mtry = c(2, 3, 4, 5)),
+    ntree = 500
+  )
+  
+  # 存储详细结果
+  cv_detailed_results[[species]] <- cv_model
+  
+  # 计算性能指标
+  cv_pred <- cv_model$pred
+  cv_pred$Species <- species
+  
+  # 计算混淆矩阵
+  cm <- confusionMatrix(cv_pred$pred, cv_pred$obs)
+  
+  # 计算AUC
+  roc_obj <- roc(cv_pred$obs, cv_pred$Present)
+  auc_value <- auc(roc_obj)
+  
+  # 存储结果
+  temp_result <- data.frame(
+    Species = species,
+    Accuracy = cm$overall["Accuracy"],
+    Sensitivity = cm$byClass["Sensitivity"],
+    Specificity = cm$byClass["Specificity"],
+    Precision = cm$byClass["Precision"],
+    F1 = cm$byClass["F1"],
+    AUC = as.numeric(auc_value),
+    Best_mtry = cv_model$bestTune$mtry
+  )
+  
+  cv_results <- rbind(cv_results, temp_result)
+}
+
+# 显示交叉验证结果
+cat("\n交叉验证结果汇总:\n")
+print(cv_results)
+
+# 计算平均性能
+avg_performance <- cv_results %>%
+  summarise(
+    Avg_Accuracy = mean(Accuracy, na.rm = TRUE),
+    Avg_Sensitivity = mean(Sensitivity, na.rm = TRUE),
+    Avg_Specificity = mean(Specificity, na.rm = TRUE),
+    Avg_Precision = mean(Precision, na.rm = TRUE),
+    Avg_F1 = mean(F1, na.rm = TRUE),
+    Avg_AUC = mean(AUC, na.rm = TRUE)
+  )
+
+cat("\n平均性能指标:\n")
+print(avg_performance)
+
+# 可视化交叉验证结果
+# 性能指标比较图
+cv_results_long <- cv_results %>%
+  select(Species, Accuracy, Sensitivity, Specificity, Precision, F1, AUC) %>%
+  pivot_longer(cols = -Species, names_to = "Metric", values_to = "Value")
+
+p3 <- ggplot(cv_results_long, aes(x = Species, y = Value, fill = Metric)) +
+  geom_col(position = "dodge", alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "交叉验证性能指标比较",
+       x = "树种", y = "性能指标值") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_viridis_d()
+
+ggsave("cv_performance_comparison.png", p3, width = 12, height = 8, dpi = 300)
+
+# AUC性能柱状图
+p4 <- ggplot(cv_results, aes(x = reorder(Species, AUC), y = AUC, fill = Species)) +
+  geom_col(alpha = 0.7) +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "各树种AUC性能排序",
+       x = "树种", y = "AUC值") +
+  theme(legend.position = "none") +
+  scale_fill_viridis_d()
+
+ggsave("auc_performance_ranking.png", p4, width = 10, height = 6, dpi = 300)
+
+cat("\n交叉验证图表已保存!\n")
+
+# 4. 模型多物种泛化性能评估
+cat("\n=== 模型多物种泛化性能评估 ===\n")
+
+# 进行跨物种预测评估
+generalization_results <- data.frame()
+
+for(i in 1:length(unique_species)) {
+  for(j in 1:length(unique_species)) {
+    if(i != j) {
+      train_species <- unique_species[i]
+      test_species <- unique_species[j]
+      
+      cat("训练物种:", train_species, "-> 测试物种:", test_species, "\n")
+      
+      # 准备训练数据
+      train_species_data <- train_data[train_data$Species == train_species, ]
+      X_train <- train_species_data[, feature_cols]
+      y_train <- as.factor(train_species_data$pres.abs)
+      
+      # 准备测试数据
+      test_species_data <- train_data[train_data$Species == test_species, ]
+      X_test <- test_species_data[, feature_cols]
+      y_test <- as.factor(test_species_data$pres.abs)
+      
+      # 训练模型
+      rf_model <- randomForest(x = X_train, y = y_train, ntree = 500)
+      
+      # 预测
+      pred_prob <- predict(rf_model, X_test, type = "prob")
+      pred_class <- predict(rf_model, X_test)
+      
+      # 计算性能指标
+      cm <- confusionMatrix(pred_class, y_test)
+      
+      # 计算AUC
+      if(ncol(pred_prob) == 2) {
+        roc_obj <- roc(y_test, pred_prob[, "1"])
+        auc_value <- auc(roc_obj)
+      } else {
+        auc_value <- NA
+      }
+      
+      # 存储结果
+      temp_result <- data.frame(
+        Train_Species = train_species,
+        Test_Species = test_species,
+        Accuracy = cm$overall["Accuracy"],
+        Sensitivity = cm$byClass["Sensitivity"],
+        Specificity = cm$byClass["Specificity"],
+        AUC = as.numeric(auc_value)
+      )
+      
+      generalization_results <- rbind(generalization_results, temp_result)
+    }
+  }
+}
+
+# 计算泛化性能统计
+generalization_summary <- generalization_results %>%
+  group_by(Train_Species) %>%
+  summarise(
+    Avg_Accuracy = mean(Accuracy, na.rm = TRUE),
+    Avg_Sensitivity = mean(Sensitivity, na.rm = TRUE),
+    Avg_Specificity = mean(Specificity, na.rm = TRUE),
+    Avg_AUC = mean(AUC, na.rm = TRUE),
+    SD_Accuracy = sd(Accuracy, na.rm = TRUE),
+    SD_AUC = sd(AUC, na.rm = TRUE)
+  ) %>%
+  arrange(desc(Avg_AUC))
+
+cat("\n泛化性能汇总（按训练物种）:\n")
+print(generalization_summary)
+
+# 比较物种内vs物种间性能
+within_species_auc <- cv_results$AUC
+between_species_auc <- generalization_results$AUC[!is.na(generalization_results$AUC)]
+
+performance_comparison <- data.frame(
+  Type = c(rep("物种内", length(within_species_auc)), 
+           rep("物种间", length(between_species_auc))),
+  AUC = c(within_species_auc, between_species_auc)
+)
+
+cat("\n物种内 vs 物种间性能比较:\n")
+cat("物种内平均AUC:", mean(within_species_auc, na.rm = TRUE), "\n")
+cat("物种间平均AUC:", mean(between_species_auc, na.rm = TRUE), "\n")
+cat("性能差异:", mean(within_species_auc, na.rm = TRUE) - mean(between_species_auc, na.rm = TRUE), "\n")
+
+# 可视化泛化性能
+# 泛化性能热图
+generalization_matrix <- generalization_results %>%
+  select(Train_Species, Test_Species, AUC) %>%
+  pivot_wider(names_from = Test_Species, values_from = AUC) %>%
+  column_to_rownames("Train_Species") %>%
+  as.matrix()
+
+png("generalization_heatmap.png", width = 10, height = 8, units = "in", res = 300)
+pheatmap(generalization_matrix, 
+         main = "跨物种泛化性能热图 (AUC)",
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         color = viridis(100),
+         na_col = "white",
+         fontsize = 10)
+dev.off()
+
+# 物种内vs物种间性能比较箱线图
+p5 <- ggplot(performance_comparison, aes(x = Type, y = AUC, fill = Type)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.5) +
+  theme_minimal() +
+  labs(title = "物种内 vs 物种间模型性能比较",
+       x = "预测类型", y = "AUC值") +
+  scale_fill_viridis_d() +
+  theme(legend.position = "none")
+
+ggsave("within_vs_between_species_performance.png", p5, width = 8, height = 6, dpi = 300)
+
+# 各物种泛化能力排序
+p6 <- ggplot(generalization_summary, aes(x = reorder(Train_Species, Avg_AUC), 
+                                         y = Avg_AUC, fill = Train_Species)) +
+  geom_col(alpha = 0.7) +
+  geom_errorbar(aes(ymin = Avg_AUC - SD_AUC, ymax = Avg_AUC + SD_AUC), 
+                width = 0.2, alpha = 0.7) +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "各物种模型的泛化能力排序",
+       x = "训练物种", y = "平均AUC值") +
+  theme(legend.position = "none") +
+  scale_fill_viridis_d()
+
+ggsave("species_generalization_ranking.png", p6, width = 10, height = 6, dpi = 300)
+
+cat("\n泛化性能评估图表已保存!\n")
+
+# 5. 分布地图可视化
+cat("\n=== 分布地图可视化 ===\n")
+
+# 准备地图数据
+# 合并训练和测试数据的地理信息
+train_geo <- train_data %>%
+  select(long, lat, Species, pres.abs, rainann, tempann, soildepth, topo) %>%
+  mutate(data_type = "训练数据")
+
+test_geo <- test_data %>%
+  select(long, lat, Species) %>%
+  mutate(pres.abs = NA, data_type = "测试数据")
+
+all_geo_data <- rbind(train_geo, test_geo)
+
+# 获取地图边界
+lon_range <- range(all_geo_data$long, na.rm = TRUE)
+lat_range <- range(all_geo_data$lat, na.rm = TRUE)
+
+# 扩展边界
+lon_buffer <- diff(lon_range) * 0.1
+lat_buffer <- diff(lat_range) * 0.1
+
+# 创建各树种的分布地图
+species_maps <- list()
+
+for(species in unique_species) {
+  species_data <- all_geo_data[all_geo_data$Species == species, ]
+  
+  # 创建基础地图
+  p_map <- ggplot(species_data, aes(x = long, y = lat)) +
+    # 添加地理边界（如果需要）
+    geom_point(aes(color = factor(pres.abs), shape = data_type), 
+               size = 2, alpha = 0.7) +
+    scale_color_manual(values = c("0" = "red", "1" = "green", "NA" = "blue"),
+                       labels = c("0" = "不存在", "1" = "存在", "NA" = "待预测"),
+                       name = "物种状态") +
+    scale_shape_manual(values = c("训练数据" = 16, "测试数据" = 17),
+                       name = "数据类型") +
+    theme_minimal() +
+    labs(title = paste("树种", species, "的地理分布"),
+         x = "经度", y = "纬度") +
+    coord_fixed(ratio = 1) +
+    theme(legend.position = "bottom")
+  
+  species_maps[[species]] <- p_map
+  
+  # 保存单个物种分布图
+  ggsave(paste0("species_distribution_", species, ".png"), p_map, 
+         width = 10, height = 8, dpi = 300)
+}
+
+# 创建所有物种的综合分布图
+all_species_plot <- ggplot(train_geo, aes(x = long, y = lat)) +
+  geom_point(aes(color = Species, shape = factor(pres.abs)), 
+             size = 1.5, alpha = 0.6) +
+  scale_shape_manual(values = c("0" = 1, "1" = 16),
+                     labels = c("0" = "不存在", "1" = "存在"),
+                     name = "物种状态") +
+  scale_color_viridis_d(name = "树种") +
+  theme_minimal() +
+  labs(title = "所有树种的综合地理分布",
+       x = "经度", y = "纬度") +
+  coord_fixed(ratio = 1) +
+  theme(legend.position = "bottom")
+
+ggsave("all_species_distribution.png", all_species_plot, 
+       width = 12, height = 10, dpi = 300)
+
+# 创建密度分布图
+density_plot <- ggplot(train_geo, aes(x = long, y = lat)) +
+  geom_density_2d_filled(alpha = 0.7) +
+  geom_point(data = train_geo[train_geo$pres.abs == 1, ], 
+             aes(color = Species), size = 1, alpha = 0.8) +
+  scale_color_viridis_d(name = "树种") +
+  theme_minimal() +
+  labs(title = "树种分布密度图",
+       x = "经度", y = "纬度") +
+  coord_fixed(ratio = 1) +
+  theme(legend.position = "bottom")
+
+ggsave("species_density_distribution.png", density_plot, 
+       width = 12, height = 10, dpi = 300)
+
+# 创建预测概率分布图（使用之前生成的预测结果）
+# 合并预测结果和地理信息
+pred_geo <- merge(predictions, test_data[, c("id", "long", "lat", "Species")], 
+                  by = "id", all.x = TRUE)
+
+# 创建预测概率热图
+prediction_heatmap <- ggplot(pred_geo, aes(x = long, y = lat, fill = pred)) +
+  geom_point(shape = 21, size = 2, alpha = 0.8) +
+  scale_fill_viridis_c(name = "预测概率", 
+                       option = "plasma") +
+  facet_wrap(~Species, ncol = 3) +
+  theme_minimal() +
+  labs(title = "各树种预测概率分布图",
+       x = "经度", y = "纬度") +
+  coord_fixed(ratio = 1) +
+  theme(legend.position = "bottom",
+        strip.text = element_text(size = 10))
+
+ggsave("prediction_probability_heatmap.png", prediction_heatmap, 
+       width = 15, height = 12, dpi = 300)
+
+# 环境梯度可视化
+# 选择几个重要的环境变量进行可视化
+env_vars <- c("rainann", "tempann", "soildepth", "topo")
+env_plots <- list()
+
+for(var in env_vars) {
+  p_env <- ggplot(train_geo, aes_string(x = "long", y = "lat", color = var)) +
+    geom_point(size = 1.5, alpha = 0.7) +
+    scale_color_viridis_c(name = var) +
+    theme_minimal() +
+    labs(title = paste("环境变量", var, "的空间分布"),
+         x = "经度", y = "纬度") +
+    coord_fixed(ratio = 1)
+  
+  env_plots[[var]] <- p_env
+  ggsave(paste0("environmental_", var, "_distribution.png"), p_env, 
+         width = 10, height = 8, dpi = 300)
+}
+
+# 创建环境变量组合图
+png("environmental_variables_combined.png", width = 15, height = 12, units = "in", res = 300)
+grid.arrange(grobs = env_plots, ncol = 2, nrow = 2)
+dev.off()
+
+cat("\n分布地图可视化已完成!\n")
+cat("生成的地图文件包括:\n")
+cat("- 各树种单独分布图\n")
+cat("- 所有树种综合分布图\n")
+cat("- 密度分布图\n")
+cat("- 预测概率热图\n")
+cat("- 环境变量分布图\n")
+
+cat("\n脚本执行完成！\n")
+cat("分析结果包括:\n")
+cat("1. 变量重要性分析及可视化\n")
+cat("2. 特征显著性检验\n")
+cat("3. 交叉验证性能评估\n")
+cat("4. 模型多物种泛化性能评估\n")
+cat("5. 分布地图可视化\n")
+cat("6. 提交文件: submission.csv\n") 
+
+
+```
