@@ -54,16 +54,16 @@ for i, species in enumerate(species_list, start=1):
     # 构建 CNN 模型
     model = Sequential([
         Input(shape=(X_train.shape[1], 1)),
-        Conv1D(32, kernel_size=3, activation='relu'),
+        Conv1D(128, kernel_size=3, activation='relu'),
         MaxPooling1D(pool_size=2),
         Flatten(),
-        Dense(64, activation='relu'),
+        Dense(128, activation='relu'),
         Dense(1, activation='sigmoid')
     ])
     model.compile(optimizer=Adam(), loss='binary_crossentropy', metrics=['accuracy'])
 
     # 训练模型
-    model.fit(X_train, y_train, epochs=30, batch_size=128, verbose=0)
+    model.fit(X_train, y_train, epochs=100, batch_size=128, verbose=0)
 
     # 验证预测
     val_pred = model.predict(X_val).flatten()
