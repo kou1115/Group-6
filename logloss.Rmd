@@ -1,0 +1,234 @@
+---
+title: "species"
+author: "Shuchen Kou"
+date: "2025-06-08"
+output: html_document
+---
+
+```{r}
+install.packages("glmnet")
+library(glmnet)
+install.packages("car")
+library(car)
+install.packages("mgcv")
+library(mgcv)
+
+```
+
+```{r}
+data_train<-read.csv("train.csv",header=TRUE)
+data_test<-read.csv("test.csv",header=TRUE)
+train_1<-subset(data_train, Species=="Angophora.costata")
+train_2<-subset(data_train, Species=="Corymbia.gummifera")
+train_3<-subset(data_train, Species=="Corymbia.intermedia")
+train_4<-subset(data_train, Species=="Eucalyptus.blakelyi")
+train_5<-subset(data_train, Species=="Eucalyptus.carnea")
+train_6<-subset(data_train, Species=="Eucalyptus.fastigata")
+train_7<-subset(data_train, Species=="Eucalyptus.campanulata")
+train_8<-subset(data_train, Species=="Eucalyptus.nova-anglica")
+
+```
+
+```{r}
+test_1<-subset(data_test, Species=="Angophora.costata")
+test_2<-subset(data_test, Species=="Corymbia.gummifera")
+test_3<-subset(data_test, Species=="Corymbia.intermedia")
+test_4<-subset(data_test, Species=="Eucalyptus.blakelyi")
+test_5<-subset(data_test, Species=="Eucalyptus.carnea")
+test_6<-subset(data_test, Species=="Eucalyptus.fastigata")
+test_7<-subset(data_test, Species=="Eucalyptus.campanulata")
+test_8<-subset(data_test, Species=="Eucalyptus.nova-anglica")
+
+```
+
+#species1
+```{r}
+Logistic_1<-glm(as.factor(pres.abs)~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_1,family=binomial)
+summary(Logistic_1)
+Logi_prediction_1<-predict(Logistic_1,newdata=test_1,type="response")
+result_1<-data.frame(id=test_1$id,predicted_prob=as.vector(Logi_prediction_1))
+```
+
+#species2
+```{r}
+Logistic_2<-glm(as.factor(pres.abs)~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_2,family=binomial)
+summary(Logistic_2)
+Logi_prediction_2<-predict(Logistic_2,newdata=test_2,type="response")
+result_2<-data.frame(id=test_2$id,predicted_prob=as.vector(Logi_prediction_2))
+```
+
+#species3
+```{r}
+Logistic_3<-glm(as.factor(pres.abs)~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_3,family=binomial)
+summary(Logistic_3)
+Logi_prediction_3<-predict(Logistic_3,newdata=test_3,type="response")
+result_3<-data.frame(id=test_3$id,predicted_prob=as.vector(Logi_prediction_3))
+```
+
+#species4
+```{r}
+Logistic_4<-glm(as.factor(pres.abs)~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_4,family=binomial)
+summary(Logistic_4)
+Logi_prediction_4<-predict(Logistic_4,newdata=test_4,type="response")
+result_4<-data.frame(id=test_4$id,predicted_prob=as.vector(Logi_prediction_4))
+```
+
+#species5
+```{r}
+Logistic_5<-glm(as.factor(pres.abs)~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_5,family=binomial)
+summary(Logistic_5)
+Logi_prediction_5<-predict(Logistic_5,newdata=test_5,type="response")
+result_5<-data.frame(id=test_5$id,predicted_prob=as.vector(Logi_prediction_5))
+```
+
+#species6
+```{r}
+Logistic_6<-glm(as.factor(pres.abs)~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_6,family=binomial)
+summary(Logistic_6)
+Logi_prediction_6<-predict(Logistic_6,newdata=test_6,type="response")
+result_6<-data.frame(id=test_6$id,predicted_prob=as.vector(Logi_prediction_6))
+```
+
+#species7
+```{r}
+Logistic_7<-glm(as.factor(pres.abs)~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_7,family=binomial)
+summary(Logistic_7)
+Logi_prediction_7<-predict(Logistic_7,newdata=test_7,type="response")
+result_7<-data.frame(id=test_7$id,predicted_prob=as.vector(Logi_prediction_7))
+```
+
+#species8
+```{r}
+Logistic_8<-glm(as.factor(pres.abs)~disturb+rainann+soildepth+soilfert+tempann+topo+easting+northing,data = train_8,family=binomial)
+summary(Logistic_8)
+Logi_prediction_8<-predict(Logistic_8,newdata=test_8,type="response")
+result_8<-data.frame(id=test_8$id,predicted_prob=as.vector(Logi_prediction_8))
+```
+
+```{r}
+all_results <- do.call(rbind, list(result_1, result_2, result_3, result_4, result_5, result_6, result_7, result_8))
+write.csv(all_results, "glm_results.csv", row.names = FALSE)
+```
+
+## 变量删除对LogLoss影响分析
+
+```{r}
+# === GLM变量删除影响分析（自动防呆·无可视化·健壮版）===
+
+library(dplyr)
+library(readr)
+library(tidyr)
+
+# 自定义logloss
+logloss <- function(actual, predicted) {
+  eps <- 1e-15
+  predicted <- pmin(pmax(predicted, eps), 1 - eps)
+  -mean(actual * log(predicted) + (1 - actual) * log(1 - predicted))
+}
+
+# 特征列，自动排除物种名和目标变量
+feature_cols <- setdiff(colnames(train), c("Species", "pres.abs","long","lat","id","plot"))
+unique_species <- unique(train$Species)
+
+variable_deletion_impact <- data.frame()
+
+for (species in unique_species) {
+  cat("\n分析树种", species, "的变量删除影响...\n")
+  species_train <- train[train$Species == species, ]
+  # 如样本量过少，直接跳过本物种
+  if (nrow(species_train) < 10) next
+  y_train <- species_train$pres.abs
+  # 只要目标变量有非0/1或全为NA也跳过
+  if (any(is.na(y_train)) | length(unique(y_train)) < 2) next
+
+  # 基准5折交叉验证LogLoss
+  cv_results_full <- numeric(5)
+  for (i in 1:5) {
+    set.seed(i)
+    train_indices <- sample(1:nrow(species_train), 0.8 * nrow(species_train))
+    cv_train <- species_train[train_indices, ]
+    cv_test <- species_train[-train_indices, ]
+    formula_full <- as.formula(paste("pres.abs ~", paste(feature_cols, collapse = " + ")))
+    model_full <- glm(formula_full, data = cv_train, family = binomial)
+    pred_full <- predict(model_full, newdata = cv_test, type = "response")
+    cv_results_full[i] <- logloss(cv_test$pres.abs, pred_full)
+  }
+  baseline_logloss <- mean(cv_results_full)
+  
+  # 每个变量逐一删除
+  for (var_to_remove in feature_cols) {
+    remaining_features <- setdiff(feature_cols, var_to_remove)
+    if (length(remaining_features) == 0) next
+    cv_results_reduced <- numeric(5)
+    for (i in 1:5) {
+      set.seed(i)
+      train_indices <- sample(1:nrow(species_train), 0.8 * nrow(species_train))
+      cv_train <- species_train[train_indices, ]
+      cv_test <- species_train[-train_indices, ]
+      formula_reduced <- as.formula(paste("pres.abs ~", paste(remaining_features, collapse = " + ")))
+      model_reduced <- glm(formula_reduced, data = cv_train, family = binomial)
+      pred_reduced <- predict(model_reduced, newdata = cv_test, type = "response")
+      cv_results_reduced[i] <- logloss(cv_test$pres.abs, pred_reduced)
+    }
+    reduced_logloss <- mean(cv_results_reduced)
+    logloss_change <- reduced_logloss - baseline_logloss
+    temp_result <- data.frame(
+      Species = species,
+      Removed_Variable = var_to_remove,
+      Baseline_LogLoss = baseline_logloss,
+      Reduced_LogLoss = reduced_logloss,
+      LogLoss_Change = logloss_change,
+      Performance_Impact = ifelse(logloss_change > 0, "decrease", "improve")
+    )
+    variable_deletion_impact <- rbind(variable_deletion_impact, temp_result)
+  }
+}
+
+cat("本次分析共获得记录行数：", nrow(variable_deletion_impact), "\n")
+
+if (nrow(variable_deletion_impact) == 0) {
+  cat("没有足够数据输出结果。请检查train_data的Species和pres.abs，以及各物种样本量！\n")
+} else {
+  # 聚合统计
+  max_impact_by_species <- variable_deletion_impact %>%
+    group_by(Species) %>%
+    filter(LogLoss_Change == max(LogLoss_Change, na.rm=TRUE)) %>%
+    arrange(desc(LogLoss_Change))
+  
+  overall_impact <- variable_deletion_impact %>%
+    group_by(Removed_Variable) %>%
+    summarise(
+      Avg_LogLoss_Change = mean(LogLoss_Change, na.rm = TRUE),
+      Max_LogLoss_Change = max(LogLoss_Change, na.rm = TRUE),
+      Min_LogLoss_Change = min(LogLoss_Change, na.rm = TRUE),
+      SD_LogLoss_Change = sd(LogLoss_Change, na.rm = TRUE),
+      Affected_Species_Count = sum(LogLoss_Change > 0, na.rm = TRUE)
+    ) %>%
+    arrange(desc(Avg_LogLoss_Change))
+  
+  species_sensitivity <- variable_deletion_impact %>%
+    group_by(Species) %>%
+    summarise(
+      Avg_LogLoss_Change = mean(LogLoss_Change, na.rm = TRUE),
+      Max_LogLoss_Change = max(LogLoss_Change, na.rm = TRUE),
+      Min_LogLoss_Change = min(LogLoss_Change, na.rm = TRUE),
+      SD_LogLoss_Change = sd(LogLoss_Change, na.rm = TRUE)
+    ) %>%
+    arrange(desc(Avg_LogLoss_Change))
+  
+  # 输出主要结果
+  cat("\n对每个树种影响最大的变量:\n")
+  print(max_impact_by_species)
+  cat("\n对整体影响最大的变量:\n")
+  print(overall_impact)
+  cat("\n各树种对变量删除敏感度:\n")
+  print(species_sensitivity)
+  
+  # 保存详细结果
+  write_csv(variable_deletion_impact, "glm_variable_deletion_impact_results.csv")
+  write_csv(overall_impact, "glm_overall_variable_impact.csv")
+  write_csv(species_sensitivity, "glm_species_sensitivity_analysis.csv")
+}
+
+```
+
